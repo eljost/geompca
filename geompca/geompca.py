@@ -22,6 +22,7 @@ def parse_args(args):
                              "use for the PCA")
     parser.add_argument("--energies",
                         help="File with energies of the conformers.")
+    parser.add_argument("--kcal2kj", action="store_true")
     # Anzeige von 2D, 3D, Skree und Crossplot optional machen...
     return parser.parse_args(args)
 
@@ -169,6 +170,8 @@ def run():
     X_new = pca.fit_transform(X_scaled)
     if args.energies:
         energies = np.loadtxt(args.energies)
+        if args.kcal2kj:
+            energies *= 4.184
     else:
         print("Couldn't find any energies!")
         energies = np.zeros(len(xyzs))
