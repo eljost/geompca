@@ -2,15 +2,30 @@
 
 import argparse
 from itertools import combinations
+from pathlib import Path
+from math import cos, sin
 import sys
 
+import array_to_latex as a2l
+import matplotlib
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from sklearn import preprocessing
 from sklearn.decomposition import PCA
+import joblib
 
-from qchelper.geometry import parse_trj_file, parse_xyz_file
+from pysisyphus.intcoords import Stretch, Bend, Torsion
+from pysisyphus.xyzloader import parse_trj_file, parse_xyz_file
+import mymplrc
+
+# matplotlib.rcParams['svg.fonttype'] = 'none'
+# matplotlib.rcParams['pdf.fonttype'] = 42
+# matplotlib.rcParams['font.sans-serif'] = "Arial"
+# matplotlib.rcParams['font.family'] = "sans-serif"
+
+
+np.set_printoptions(suppress=True, precision=4)
 
 
 def parse_args(args):
@@ -23,52 +38,37 @@ def parse_args(args):
     parser.add_argument("--energies",
                         help="File with energies of the conformers.")
     parser.add_argument("--kcal2kj", action="store_true")
+    parser.add_argument("--auinp", action="store_true",
+        help="Expect absolute energies in a.u. as input.")
+    select_group = parser.add_mutually_exclusive_group(required=False)
+    select_group.add_argument("--first", default=None, type=int,
+        help="Only consider the first N geometries.")
+    select_group.add_argument("--skip", type=int, nargs="+", default=[],
+        help="Skip these indices (0-based)."
+    )
     # Anzeige von 2D, 3D, Skree und Crossplot optional machen...
     return parser.parse_args(args)
 
 
-def calc_bond(xyz, ind1, ind2):
-    """Calculate a bond length between two atoms."""
-    return np.linalg.norm(xyz[ind1]-xyz[ind2])
-
-
-def calc_angle(xyz, ind1, ind2, ind3):
-    """Calculate an angle between three atoms."""
-    vec1 = xyz[ind1] - xyz[ind2]
-    vec2 = xyz[ind3] - xyz[ind2]
-    vec1n = np.linalg.norm(vec1)
-    vec2n = np.linalg.norm(vec2)
-    dotp = np.dot(vec1, vec2)
-    radians = np.arccos(dotp / (vec1n * vec2n))
-    return np.degrees(radians)
-
-
-def calc_dihedral(xyz, ind1, ind2, ind3, ind4):
-    """Calculate the dihedral angle for four atoms."""
-    vec1 = xyz[ind1] - xyz[ind2]
-    vec2 = xyz[ind2] - xyz[ind3]
-    vec3 = xyz[ind3] - xyz[ind4]
-
-    n1 = np.cross(vec1, vec2) 
-    n1 /= np.linalg.norm(n1)
-    n2 = np.cross(vec2, vec3) 
-    n2 /= np.linalg.norm(n2)
-
-    u1 = n2
-    u3 = vec2/np.linalg.norm(vec2)
-    u2 = np.cross(u3, u1)
-
-    radians = -np.arctan2(n1.dot(u2), n1.dot(u1))
-    return np.degrees(radians)
-
-
 def calc_params(xyz, inds_list):
+    calc_torsion = lambda xyz, inds: Torsion._calculate(xyz, inds)
     calc_dict = {
-        2: calc_bond,
-        3: calc_angle,
-        4: calc_dihedral
+        2: Stretch,
+        3: Bend,
+        4: Torsion,
     }
-    return [calc_dict[len(inds)](xyz, *inds) for inds in inds_list]
+    params = list()
+    for inds in inds_list:
+        prim_val = calc_dict[len(inds)]._calculate(xyz, inds)
+        # See https://pubmed.ncbi.nlm.nih.gov/15521057/ for a discussion,
+        # why we can't directly use dihedrals.
+        if len(inds) == 4:
+            cos_rad = cos(prim_val)
+            sin_rad = sin(prim_val)
+            params.extend((cos(prim_val), sin(prim_val)))
+            continue
+        params.append(prim_val)
+    return params
 
 
 def skree_plot(pca):
@@ -80,23 +80,24 @@ def skree_plot(pca):
     ax.plot(xs, explained_cumsum, "X-")
     ax.set_xlabel("Principal components")
     ax.set_ylabel("Explained variance / %")
-    return ax
+    return fig, ax
 
 
 def pc_label(pca, i):
     return f"PC{i+1} ({pca.explained_variance_ratio_[i]:.1%})"
 
 
-def two_components(X_new, energies, pca):
-    fig, ax = plt.subplots()
+def two_components(X_new, energies, pca, labels):
+    fig, ax = plt.subplots(figsize=(10, 6))
     scatter2d = ax.scatter(X_new[:,0], X_new[:,1], c=energies)
-    fig.colorbar(scatter2d, label="kJ/mol")
+    fig.colorbar(scatter2d, label="E / kJ mol$^{-1}$")
     for i in range(energies.size):
-        ax.annotate(str(i+1), xy=X_new[i,:2]+0.1)
+        ax.annotate(labels[i], xy=X_new[i,:2]+0.1)
         
     ax.set_xlabel(pc_label(pca, 0))
     ax.set_ylabel(pc_label(pca, 1))
-    return ax
+    plt.tight_layout()
+    return fig, ax
 
 
 def three_components(X_new, energies, pca):
@@ -111,7 +112,7 @@ def three_components(X_new, energies, pca):
     ax.set_xlabel(pc_label(pca, 0))
     ax.set_ylabel(pc_label(pca, 1))
     ax.set_zlabel(pc_label(pca, 2))
-    return ax
+    return fig, ax
 
 
 def unset_ticks():
@@ -146,7 +147,7 @@ def cross_components(X_new, energies, pca, comp_num):
                 
             #ax.set_xlabel(pc_label(pca, i))
             #ax.set_ylabel(pc_label(pca, j))
-    return ax_arr
+    return fig, ax_arr
 
 
 def all_bond_inds(atom_num):
@@ -154,10 +155,104 @@ def all_bond_inds(atom_num):
     return list(combinations(atom_range, 2))
 
 
+def rank_energies(energies):
+    # import pdb; pdb.set_trace()
+    print("Geoms are given with 1-based indexing.")
+    for i, ind in enumerate(np.argsort(energies), 1):
+        print(f"Rank {i:02d}: geom {ind+1:02d}, {energies[ind]:>5.1f} kJ/mol")
+    pass
+
+
+def load(X_new_fn, energies_fn, pca_fn):
+    X_new = np.loadtxt(X_new_fn)
+    energies = np.loadtxt(energies_fn)
+    pca = joblib.load(pca_fn) 
+    return X_new, energies, pca
+
+
+def gas_dual():
+    base = Path(".").resolve()
+    bare = "bare_gas_X_new.dat bare_gas_energies_kjmol.dat bare_gas_pca.pkl"
+    mecoome = "mecoome_gas_X_new.dat mecoome_gas_energies_kjmol.dat mecoome_gas_pca.pkl"
+    run_dual(base, bare, mecoome)
+
+
+def run_dual(base, fns1, fns2):
+    base = Path(base)
+    data1 = [base / fn for fn in fns1.split()]
+    data1 = load(*data1)
+    data2 = [base / fn for fn in fns2.split()]
+    data2 = load(*data2)
+    # fig1, _ = two_components(*data1)
+    # fig2, _ = two_components(*data2)
+    fig = dual_2d(*data1, *data2)
+    plt.tight_layout()
+    plt.savefig("dual.svg", transparent=True)
+    plt.show()
+
+
+def dual_2d(X_new1, energies1, pca1, labels1,
+            X_new2, energies2, pca2, labels2):
+    """
+    https://stackoverflow.com/questions/46106912
+    """
+    en_min = min(energies1.min(), energies2.min())
+    en_max = max(energies1.max(), energies2.max())
+    norm = plt.Normalize(en_min, en_max)
+
+    def plot(ax, X_new, energies, pca, labels):
+        scatter2d = ax.scatter(X_new[:,0], X_new[:,1], c=energies, norm=norm)
+        for i in range(energies.size):
+            ax.annotate(labels[i], xy=X_new[i,:2]+0.1)
+        ax.set_xlabel(pc_label(pca, 0))
+        ax.set_ylabel(pc_label(pca, 1))
+        return scatter2d
+
+    fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(5.5, 3.5))
+    l1 = plot(ax1, X_new1, energies1, pca1)
+    l2 = plot(ax2, X_new2, energies2, pca2)
+    fig.colorbar(l1, ax=(ax1, ax2), label="kJ/mol")
+    return fig
+
+
+def skip_items(skip_inds, iterable):
+    return [item for i, item in enumerate(iterable) if not (i in skip_inds)]
+
+
 def run():
     args = parse_args(sys.argv[1:])
     trj_fn = args.trj #"xyzs/aligned.trj"
-    xyzs = [geom[1] for geom in parse_trj_file(trj_fn)]
+    geoms = [geom for geom in parse_trj_file(trj_fn)]
+    xyzs = [coords for atoms, coords in geoms]
+    atoms = geoms[0][0]
+
+    labels = [str(i) for i, _ in enumerate(xyzs, 1)]
+    if args.energies:
+        energies = np.loadtxt(args.energies)
+        if args.kcal2kj:
+            energies *= 4.184
+        if args.auinp:
+            energies -= energies.min()
+            energies *= 2625.50
+        rank_energies(energies)
+    else:
+        print("Couldn't find any energies!")
+        energies = np.zeros(len(xyzs))
+
+    if args.first:
+        xyzs = xyzs[:args.first]
+        energies = energies[:args.first]
+        labels = labels[:args.first]
+
+    skip_inds = args.skip
+    xyzs = skip_items(skip_inds, xyzs)
+    energies = skip_items(skip_inds, energies)
+    labels = skip_items(skip_inds, labels)
+    if args.skip:
+        print("!"*10)
+        print(f"Skipped entrie(s): {' '.join([str(ind) for ind in args.skip])}")
+        print("!"*10)
+    energies = np.array(energies)
 
     with open(args.inds) as handle:
         inds = handle.read()
@@ -168,22 +263,41 @@ def run():
     #X_scaled = X # no scaling
     pca = PCA()
     X_new = pca.fit_transform(X_scaled)
-    if args.energies:
-        energies = np.loadtxt(args.energies)
-        if args.kcal2kj:
-            energies *= 4.184
-    else:
-        print("Couldn't find any energies!")
-        energies = np.zeros(len(xyzs))
+    joblib.dump(pca, 'pca.pkl') 
+    np.savetxt("energies_kjmol.dat", energies)
+    np.savetxt("X_new.dat", X_new)
 
-    skree_ax = skree_plot(pca)
-    ax_2d = two_components(X_new, energies, pca)
-    ax_3d = three_components(X_new, energies, pca)
-    cross_arr = cross_components(X_new, energies, pca, 4)
+    # Only report first two PCs
+    tab = a2l.to_ltx(pca.components_[:2].T, frmt="{:.2f}", arraytype="tabular",
+                     print_out=False)
+    def inds_to_str(inds, atoms):
+        return "--\\,".join([f"{atoms[ind]}{ind+1}" for ind in inds])
+    ind_strs = [inds_to_str(inds_, atoms) for inds_ in inds]
+    with open("pca_comps_tabular.tex", "w") as handle:
+        handle.write(tab)
+
+    fig_skree, skree_ax = skree_plot(pca)
+    fig_2d, ax_2d = two_components(X_new, energies, pca, labels)
+    # fig_3d, ax_3d = three_components(X_new, energies, pca)
+    # fig_cross, cross_arr = cross_components(X_new, energies, pca, 4)
 
     plt.tight_layout()
     plt.show()
 
+    fig_skree.savefig("skree.pdf")
+    fig_skree.savefig("skree.svg")
+    fig_2d.savefig("geompca_2d.pdf")
+    fig_2d.savefig("geompca_2d.svg")
+    # fig_3d.savefig("geompca_3d.pdf")
+    # fig_3d.savefig("geompca_3d.svg")
+    # fig_cross.savefig("geompca_cross.pdf")
+    # fig_cross.savefig("geompca_cross.svg")
+
+
+
 
 if __name__ == "__main__":
-    run()
+    if sys.argv[1] == "dual":
+        gas_dual()
+    else:
+        run()
