@@ -7,22 +7,23 @@ from math import cos, sin
 import sys
 
 import array_to_latex as a2l
-import matplotlib
+
+# import matplotlib
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+
+# from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from sklearn import preprocessing
 from sklearn.decomposition import PCA
 import joblib
 
 from pysisyphus.intcoords import Stretch, Bend, Torsion
-from pysisyphus.xyzloader import parse_trj_file, parse_xyz_file
-import mymplrc
+from pysisyphus.xyzloader import parse_trj_file
 
-# matplotlib.rcParams['svg.fonttype'] = 'none'
-# matplotlib.rcParams['pdf.fonttype'] = 42
-# matplotlib.rcParams['font.sans-serif'] = "Arial"
-# matplotlib.rcParams['font.family'] = "sans-serif"
+try:
+    import mymplrc
+except ModuleNotFoundError:
+    print("mymplrc is not installed. skipping import.")
 
 
 np.set_printoptions(suppress=True, precision=4)
@@ -30,28 +31,29 @@ np.set_printoptions(suppress=True, precision=4)
 
 def parse_args(args):
     parser = argparse.ArgumentParser()
-    parser.add_argument("trj",
-                        help=".trj file with all input geometries.")
-    parser.add_argument("inds",
-                        help="File with the internal coordinate indices to "
-                             "use for the PCA")
-    parser.add_argument("--energies",
-                        help="File with energies of the conformers.")
+    parser.add_argument("trj", help=".trj file with all input geometries.")
+    parser.add_argument(
+        "inds", help="File with the internal coordinate indices to " "use for the PCA"
+    )
+    parser.add_argument("--energies", help="File with energies of the conformers.")
     parser.add_argument("--kcal2kj", action="store_true")
-    parser.add_argument("--auinp", action="store_true",
-        help="Expect absolute energies in a.u. as input.")
+    parser.add_argument(
+        "--auinp",
+        action="store_true",
+        help="Expect absolute energies in a.u. as input.",
+    )
     select_group = parser.add_mutually_exclusive_group(required=False)
-    select_group.add_argument("--first", default=None, type=int,
-        help="Only consider the first N geometries.")
-    select_group.add_argument("--skip", type=int, nargs="+", default=[],
-        help="Skip these indices (0-based)."
+    select_group.add_argument(
+        "--first", default=None, type=int, help="Only consider the first N geometries."
+    )
+    select_group.add_argument(
+        "--skip", type=int, nargs="+", default=[], help="Skip these indices (0-based)."
     )
     # Anzeige von 2D, 3D, Skree und Crossplot optional machen...
     return parser.parse_args(args)
 
 
 def calc_params(xyz, inds_list):
-    calc_torsion = lambda xyz, inds: Torsion._calculate(xyz, inds)
     calc_dict = {
         2: Stretch,
         3: Bend,
@@ -67,7 +69,7 @@ def calc_params(xyz, inds_list):
         if len(inds) == 4:
             cos_rad = cos(prim_val)
             sin_rad = sin(prim_val)
-            params.extend((cos(prim_val), sin(prim_val)))
+            params.extend((cos_rad, sin_rad))
             continue
         params.append(prim_val)
     return params
@@ -77,7 +79,7 @@ def skree_plot(pca):
     explained = pca.explained_variance_ratio_
     explained_cumsum = np.cumsum(explained)
     fig, ax = plt.subplots()
-    xs = np.arange(1, len(explained)+1)
+    xs = np.arange(1, len(explained) + 1)
     ax.plot(xs, explained, "X-")
     ax.plot(xs, explained_cumsum, "X-")
     ax.set_xlabel("Principal components")
@@ -91,11 +93,11 @@ def pc_label(pca, i):
 
 def two_components(X_new, energies, pca, labels):
     fig, ax = plt.subplots(figsize=(10, 6))
-    scatter2d = ax.scatter(X_new[:,0], X_new[:,1], c=energies)
+    scatter2d = ax.scatter(X_new[:, 0], X_new[:, 1], c=energies)
     fig.colorbar(scatter2d, label="E / kJ mol$^{-1}$")
     for i in range(energies.size):
-        ax.annotate(labels[i], xy=X_new[i,:2]+0.1)
-        
+        ax.annotate(labels[i], xy=X_new[i, :2] + 0.1)
+
     ax.set_xlabel(pc_label(pca, 0))
     ax.set_ylabel(pc_label(pca, 1))
     plt.tight_layout()
@@ -105,12 +107,12 @@ def two_components(X_new, energies, pca, labels):
 def three_components(X_new, energies, pca):
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
-    scatter3d = ax.scatter(X_new[:,0], X_new[:,1], X_new[:,2], c=energies)
+    scatter3d = ax.scatter(X_new[:, 0], X_new[:, 1], X_new[:, 2], c=energies)
     scatter3d.set_edgecolors = scatter3d.set_facecolors = lambda *args: None
     fig.colorbar(scatter3d, label="kJ/mol")
     for i in range(energies.size):
-        ax.text(*X_new[i,:3]+0.1, str(i+1))
-        
+        ax.text(*X_new[i, :3] + 0.1, str(i + 1))
+
     ax.set_xlabel(pc_label(pca, 0))
     ax.set_ylabel(pc_label(pca, 1))
     ax.set_zlabel(pc_label(pca, 2))
@@ -119,16 +121,16 @@ def three_components(X_new, energies, pca):
 
 def unset_ticks():
     plt.tick_params(
-                axis="both", 
-                which="both",
-                bottom="off",
-                top="off",
-                right="off",
-                left="off",
-                labelbottom="off",
-                labeltop="off",
-                labelright="off",
-                labelleft="off",
+        axis="both",
+        which="both",
+        bottom="off",
+        top="off",
+        right="off",
+        left="off",
+        labelbottom="off",
+        labeltop="off",
+        labelright="off",
+        labelleft="off",
     )
 
 
@@ -145,10 +147,10 @@ def cross_components(X_new, energies, pca, comp_num):
             if i == j:
                 ax.text(0.25, 0.45, pc_label(pca, i), size=10)
                 continue
-            scatter2d = ax.scatter(X_new[:,i], X_new[:,j], c=energies)
-                
-            #ax.set_xlabel(pc_label(pca, i))
-            #ax.set_ylabel(pc_label(pca, j))
+            ax.scatter(X_new[:, i], X_new[:, j], c=energies)
+
+            # ax.set_xlabel(pc_label(pca, i))
+            # ax.set_ylabel(pc_label(pca, j))
     return fig, ax_arr
 
 
@@ -168,7 +170,7 @@ def rank_energies(energies):
 def load(X_new_fn, energies_fn, pca_fn):
     X_new = np.loadtxt(X_new_fn)
     energies = np.loadtxt(energies_fn)
-    pca = joblib.load(pca_fn) 
+    pca = joblib.load(pca_fn)
     return X_new, energies, pca
 
 
@@ -193,8 +195,7 @@ def run_dual(base, fns1, fns2):
     plt.show()
 
 
-def dual_2d(X_new1, energies1, pca1, labels1,
-            X_new2, energies2, pca2, labels2):
+def dual_2d(X_new1, energies1, pca1, labels1, X_new2, energies2, pca2, labels2):
     """
     https://stackoverflow.com/questions/46106912
     """
@@ -203,9 +204,9 @@ def dual_2d(X_new1, energies1, pca1, labels1,
     norm = plt.Normalize(en_min, en_max)
 
     def plot(ax, X_new, energies, pca, labels):
-        scatter2d = ax.scatter(X_new[:,0], X_new[:,1], c=energies, norm=norm)
+        scatter2d = ax.scatter(X_new[:, 0], X_new[:, 1], c=energies, norm=norm)
         for i in range(energies.size):
-            ax.annotate(labels[i], xy=X_new[i,:2]+0.1)
+            ax.annotate(labels[i], xy=X_new[i, :2] + 0.1)
         ax.set_xlabel(pc_label(pca, 0))
         ax.set_ylabel(pc_label(pca, 1))
         return scatter2d
@@ -223,10 +224,9 @@ def skip_items(skip_inds, iterable):
 
 def run():
     args = parse_args(sys.argv[1:])
-    trj_fn = args.trj #"xyzs/aligned.trj"
+    trj_fn = args.trj  # "xyzs/aligned.trj"
     geoms = [geom for geom in parse_trj_file(trj_fn)]
     xyzs = [coords for atoms, coords in geoms]
-    atoms = geoms[0][0]
 
     labels = [str(i) for i, _ in enumerate(xyzs, 1)]
     if args.energies:
@@ -242,39 +242,37 @@ def run():
         energies = np.zeros(len(xyzs))
 
     if args.first:
-        xyzs = xyzs[:args.first]
-        energies = energies[:args.first]
-        labels = labels[:args.first]
+        xyzs = xyzs[: args.first]
+        energies = energies[: args.first]
+        labels = labels[: args.first]
 
     skip_inds = args.skip
     xyzs = skip_items(skip_inds, xyzs)
     energies = skip_items(skip_inds, energies)
     labels = skip_items(skip_inds, labels)
     if args.skip:
-        print("!"*10)
+        print("!" * 10)
         print(f"Skipped entrie(s): {' '.join([str(ind) for ind in args.skip])}")
-        print("!"*10)
+        print("!" * 10)
     energies = np.array(energies)
 
     with open(args.inds) as handle:
         inds = handle.read()
-    inds = [[int(i) for i in line.split()]
-            for line in inds.strip().split("\n")]
+    inds = [[int(i) for i in line.split()] for line in inds.strip().split("\n")]
     X = np.array([calc_params(xyz, inds) for xyz in xyzs])
     X_scaled = preprocessing.scale(X)
-    #X_scaled = X # no scaling
+    # X_scaled = X # no scaling
     pca = PCA()
     X_new = pca.fit_transform(X_scaled)
-    joblib.dump(pca, 'pca.pkl') 
+    joblib.dump(pca, "pca.pkl")
     np.savetxt("energies_kjmol.dat", energies)
     np.savetxt("X_new.dat", X_new)
 
     # Only report first two PCs
-    tab = a2l.to_ltx(pca.components_[:2].T, frmt="{:.2f}", arraytype="tabular",
-                     print_out=False)
-    def inds_to_str(inds, atoms):
-        return "--\\,".join([f"{atoms[ind]}{ind+1}" for ind in inds])
-    ind_strs = [inds_to_str(inds_, atoms) for inds_ in inds]
+    tab = a2l.to_ltx(
+        pca.components_[:2].T, frmt="{:.2f}", arraytype="tabular", print_out=False
+    )
+
     with open("pca_comps_tabular.tex", "w") as handle:
         handle.write(tab)
 
@@ -294,8 +292,6 @@ def run():
     # fig_3d.savefig("geompca_3d.svg")
     # fig_cross.savefig("geompca_cross.pdf")
     # fig_cross.savefig("geompca_cross.svg")
-
-
 
 
 if __name__ == "__main__":
