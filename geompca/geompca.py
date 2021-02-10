@@ -62,6 +62,8 @@ def calc_params(xyz, inds_list):
         prim_val = calc_dict[len(inds)]._calculate(xyz, inds)
         # See https://pubmed.ncbi.nlm.nih.gov/15521057/ for a discussion,
         # why we can't directly use dihedrals.
+        # And:
+        #   https://aip.scitation.org/doi/abs/10.1063/1.2746330
         if len(inds) == 4:
             cos_rad = cos(prim_val)
             sin_rad = sin(prim_val)
