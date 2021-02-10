@@ -20,11 +20,12 @@ setup(
         "matplotlib",
         "numpy",
         "pysisyphus",
+        "pytest",
         "scikit-learn",
     ],
     entry_points={
         "console_scripts": [
-            "geompca = geompca.geompca:run",
+            "geompca = geompca.main:run",
         ]
     },
 )

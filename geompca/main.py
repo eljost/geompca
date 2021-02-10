@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import argparse
 from itertools import combinations
 from pathlib import Path
@@ -7,11 +5,7 @@ from math import cos, sin
 import sys
 
 import array_to_latex as a2l
-
-# import matplotlib
 import matplotlib.pyplot as plt
-
-# from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 from sklearn import preprocessing
 from sklearn.decomposition import PCA
@@ -278,6 +272,8 @@ def run():
 
     fig_skree, skree_ax = skree_plot(pca)
     fig_2d, ax_2d = two_components(X_new, energies, pca, labels)
+    # import matplotlib
+    # from mpl_toolkits.mplot3d import Axes3D
     # fig_3d, ax_3d = three_components(X_new, energies, pca)
     # fig_cross, cross_arr = cross_components(X_new, energies, pca, 4)
 
