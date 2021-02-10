@@ -1,7 +1,8 @@
 import argparse
 from itertools import combinations
-from pathlib import Path
 from math import cos, sin
+from pathlib import Path
+import re
 import sys
 
 import array_to_latex as a2l
@@ -216,43 +217,7 @@ def skip_items(skip_inds, iterable):
     return [item for i, item in enumerate(iterable) if not (i in skip_inds)]
 
 
-def run():
-    args = parse_args(sys.argv[1:])
-    trj_fn = args.trj  # "xyzs/aligned.trj"
-    geoms = [geom for geom in parse_trj_file(trj_fn)]
-    xyzs = [coords for atoms, coords in geoms]
-
-    labels = [str(i) for i, _ in enumerate(xyzs, 1)]
-    if args.energies:
-        energies = np.loadtxt(args.energies)
-        if args.kcal2kj:
-            energies *= 4.184
-        if args.auinp:
-            energies -= energies.min()
-            energies *= 2625.50
-        rank_energies(energies)
-    else:
-        print("Couldn't find any energies!")
-        energies = np.zeros(len(xyzs))
-
-    if args.first:
-        xyzs = xyzs[: args.first]
-        energies = energies[: args.first]
-        labels = labels[: args.first]
-
-    skip_inds = args.skip
-    xyzs = skip_items(skip_inds, xyzs)
-    energies = skip_items(skip_inds, energies)
-    labels = skip_items(skip_inds, labels)
-    if args.skip:
-        print("!" * 10)
-        print(f"Skipped entrie(s): {' '.join([str(ind) for ind in args.skip])}")
-        print("!" * 10)
-    energies = np.array(energies)
-
-    with open(args.inds) as handle:
-        inds = handle.read()
-    inds = [[int(i) for i in line.split()] for line in inds.strip().split("\n")]
+def do_pca(xyzs, inds, energies, labels):
     X = np.array([calc_params(xyz, inds) for xyz in xyzs])
     X_scaled = preprocessing.scale(X)
     # X_scaled = X # no scaling
@@ -290,8 +255,42 @@ def run():
     # fig_cross.savefig("geompca_cross.svg")
 
 
-if __name__ == "__main__":
-    if sys.argv[1] == "dual":
-        gas_dual()
+def run():
+    args = parse_args(sys.argv[1:])
+    trj_fn = args.trj  # "xyzs/aligned.trj"
+    geoms = [geom for geom in parse_trj_file(trj_fn)]
+    xyzs = [coords for atoms, coords in geoms]
+
+    labels = [str(i) for i, _ in enumerate(xyzs, 1)]
+    if args.energies:
+        energies = np.loadtxt(args.energies)
+        if args.kcal2kj:
+            energies *= 4.184
+        if args.auinp:
+            energies -= energies.min()
+            energies *= 2625.50
+        rank_energies(energies)
     else:
-        run()
+        print("Couldn't find any energies!")
+        energies = np.zeros(len(xyzs))
+
+    first = args.first
+    skip_inds = args.skip
+    if first:
+        xyzs = xyzs[: first]
+        energies = energies[: first]
+        labels = labels[: first]
+
+    xyzs = skip_items(skip_inds, xyzs)
+    energies = skip_items(skip_inds, energies)
+    labels = skip_items(skip_inds, labels)
+    if skip_inds:
+        print("!" * 10)
+        print(f"Skipped entrie(s): {' '.join([str(ind) for ind in args.skip])}")
+        print("!" * 10)
+    energies = np.array(energies)
+
+    with open(args.inds) as handle:
+        inds = handle.read()
+    inds = [[int(i) for i in line.split()] for line in inds.strip().split("\n")]
+    do_pca(xyzs, inds, energies, labels)
