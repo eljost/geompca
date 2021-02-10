@@ -5,3 +5,9 @@ Simple PCA using a subset of internal coordinates.
 ```
 python setup.py develop
 ```
+
+## Testing
+```
+cd geompca/tests/test_mecoome/
+bash geompca.sh
+```
