@@ -48,15 +48,18 @@ def parse_args(args):
     return parser.parse_args(args)
 
 
+PRIM_DICT = {
+    2: Stretch,
+    3: Bend,
+    4: Torsion,
+}
+
+
 def calc_params(xyz, inds_list):
-    calc_dict = {
-        2: Stretch,
-        3: Bend,
-        4: Torsion,
-    }
     params = list()
     for inds in inds_list:
-        prim_val = calc_dict[len(inds)]._calculate(xyz, inds)
+        cls = PRIM_DICT[len(inds)]
+        prim_val = cls._calculate(xyz, inds)
         # See https://pubmed.ncbi.nlm.nih.gov/15521057/ for a discussion,
         # why we can't directly use dihedrals.
         # And:
@@ -218,11 +221,32 @@ def skip_items(skip_inds, iterable):
 
 
 def do_pca(xyzs, inds, energies, labels):
+    # Report employed internals
+    print("Primitive internals:")
+    for inds_ in inds:
+        print(f"\t{PRIM_DICT[len(inds_)]}: {inds_}")
+    print()
+
+    # Calculate coordinate values
     X = np.array([calc_params(xyz, inds) for xyz in xyzs])
+    # Variance 1, mean at 0
     X_scaled = preprocessing.scale(X)
-    # X_scaled = X # no scaling
+
     pca = PCA()
     X_new = pca.fit_transform(X_scaled)
+
+    # Report eigenvalues
+    print("Explained variance ratio:")
+    ev_thresh = 0.05
+    cumsum = 0.
+    for i, ev in enumerate(pca.explained_variance_ratio_):
+        cumsum += ev
+        if ev <= ev_thresh:
+            print(f"\tRemaining eigenvalues are below {ev_thresh:.4f}")
+            break
+        print(f"\tPC {i:02d}: {ev:.4f}, Σ {cumsum:.4f}")
+    print()
+
     joblib.dump(pca, "pca.pkl")
     np.savetxt("energies_kjmol.dat", energies)
     np.savetxt("X_new.dat", X_new)
