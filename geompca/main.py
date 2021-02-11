@@ -254,6 +254,8 @@ def do_pca(xyzs, inds, energies, labels):
     # fig_cross.savefig("geompca_cross.pdf")
     # fig_cross.savefig("geompca_cross.svg")
 
+    return X_new
+
 
 def run():
     args = parse_args(sys.argv[1:])
